@@ -1,62 +1,95 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
+from configurations import collection
+from schemas import user_entities
+from models import Employee
+from bson import ObjectId
 
 app = FastAPI()
 
-class StudentSchema(BaseModel):
-    name: str
-    age: int
-    major: str
+class EmployeeResponse(BaseModel):
+    status_code: int
+    message: str
+    data: dict
 
-STUDENTS = [
-    {"id": 1, "name": "Alice", "age": 20, "major": "Computer Science"},
-    {"id": 2, "name": "Bob", "age": 22, "major": "Mathematics"},
-    {"id": 3, "name": "Charlie", "age": 19, "major": "Physics"},
-    {"id": 4, "name": "David", "age": 21, "major": "Chemistry"},
-    {"id": 5, "name": "Eve", "age": 23, "major": "Biology"},
-]
+class EmployeeListResponse(BaseModel):
+    status_code: int
+    message: str
+    data: list[dict]
 
-@app.get("/")
+@app.get("/", response_model=dict[str,str])
 def read_root():
     return {"message": "Hello, World!"}
 
-@app.get("/students")
-def get_students():
-    return STUDENTS
+@app.get("/employees", response_model=EmployeeListResponse)
+def get_employees():
+    data = collection.find()
+    employees = user_entities(data)
+    return {
+        "status_code": status.HTTP_200_OK,
+        "message": "Employees retrieved successfully",
+        "data": employees
+    }
 
-# path parameter
-@app.get("/students/{student_id}")
-def get_student_by_id(student_id: int) -> dict:
-    for student in STUDENTS:
-        if student["id"] == student_id:
-            return student
-    raise HTTPException(status_code=404, detail="Student not found")
+@app.post("/employees", response_model=EmployeeResponse)
+def create_employee(emp: Employee):
+    try:
+        response = collection.insert_one(dict(emp))
+        return {
+            "status_code": status.HTTP_201_CREATED,
+            "message": "Employee created successfully",
+            "data": {"id": str(response.inserted_id)}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error occurred: {e}"
+        )
 
-# query parameter
-@app.get("/students-query")
-def get_students(start: int = 0, end: int = 2):
-    return STUDENTS[start : end]
+@app.put("/employees/{emp_id}", response_model=EmployeeResponse)
+def update_employees(emp_id: str, emp: Employee):
+    try:
+        id = ObjectId(emp_id)
+        update_result = collection.update_one(
+            {"_id": id},
+            {"$set": dict(emp)}
+        )
 
-@app.post("/add-student")
-def add_student(body:StudentSchema):
-    _id = STUDENTS[-1]['id']
-    data = body.model_dump()
-    data['id'] = _id+1
-    STUDENTS.append(data)
-    return STUDENTS
+        if update_result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee not found"
+            )
+        return {
+            "status_code": status.HTTP_200_OK,
+            "message": "Employee details updated successfully",
+            "data": {"id": emp_id}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error occurred: {e}"
+        )
 
-@app.put("/update-students/{student_id}")
-def update_student(student_id: int, body: StudentSchema):
-    for student in STUDENTS:
-        if student["id"] == student_id:
-            student.update(body.model_dump())
-            return STUDENTS
-    raise HTTPException(status_code=404, detail="Student not found")
+@app.delete("/employees/{emp_id}", response_model=EmployeeResponse)
+def delete_employee(emp_id: str):
+    try:
+        id = ObjectId(emp_id)
+        delete_result = collection.delete_one({"_id": id})
+        
+        if delete_result.deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee not found"
+            )
 
-@app.delete("/delete-students/{student_id}")
-def delete_student(student_id: int):
-    for student in STUDENTS:
-        if student["id"] == student_id:
-            STUDENTS.pop(student_id-1)
-            return STUDENTS
-    raise HTTPException(status_code=404, detail="Student not found")
+        return {
+            "status_code": status.HTTP_204_NO_CONTENT,
+            "message": "Employee deleted successfully",
+            "data": {}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error occurred: {e}"
+        )
